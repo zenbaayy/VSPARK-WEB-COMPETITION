@@ -36,121 +36,51 @@ export function toParticipant(values, userId) {
     member,
   };
 }
+
 export async function loadCompetition(user) {
   if (!supabase) return null;
-
   const profileResult = user
-    ? await supabase
-        .from('profiles')
-        .select('id,full_name,role')
-        .eq('id', user.id)
-        .maybeSingle()
+    ? await supabase.from('profiles').select('id,full_name,role').eq('id', user.id).maybeSingle()
     : { data: null, error: null };
-
-  if (profileResult.error) {
-    console.error('[Supabase] profiles lookup failed:', profileResult.error);
-    throw new Error(`profiles lookup failed: ${profileResult.error.message}`);
-  }
-
+  if (profileResult.error) throw profileResult.error;
   const role = profileResult.data?.role || 'participant';
-  const settingsSource = user
-    ? 'competition_settings'
-    : 'public_competition_settings';
-
-  const settingsResult = await supabase
-    .from(settingsSource)
-    .select('*')
-    .eq('id', 1)
-    .maybeSingle();
-
-  if (settingsResult.error) {
-    console.error(`[Supabase] ${settingsSource} lookup failed:`, settingsResult.error);
-    throw new Error(`${settingsSource} lookup failed: ${settingsResult.error.message}`);
-  }
-
+  // Participant sessions may not have SELECT access to the private settings table.
+  // The public view is intended for the website and also contains the public config.
+  const settingsSource = role === 'admin' ? 'competition_settings' : 'public_competition_settings';
+  const settingsResult = await supabase.from(settingsSource).select('*').eq('id', 1).maybeSingle();
+  if (settingsResult.error) throw settingsResult.error;
   if (!settingsResult.data) {
-    console.error(`[Supabase] No row found in ${settingsSource} for id = 1`);
-    throw new Error(
-      `${settingsSource} mein id = 1 wali row nahi mili. Supabase setup SQL check karein.`
-    );
+    throw new Error(`No id=1 settings row is visible in ${settingsSource} for this account. Check Supabase SELECT policies/view.`);
   }
-
   const rosterResult = user && role === 'admin'
-    ? await supabase
-        .from('participants')
-        .select('*')
-        .order('created_at', { ascending: false })
+    ? await supabase.from('participants').select('*').order('created_at', { ascending: false })
     : user
-      ? await supabase
-          .from('participants')
-          .select('*')
-          .eq('user_id', user.id)
-          .limit(1)
+      ? await supabase.from('participants').select('*').eq('user_id', user.id).limit(1)
       : { data: [], error: null };
-
   const resultsResult = await supabase.rpc('published_competition_results');
-
   const competitionsResult = role === 'admin'
-    ? await supabase
-        .from('competitions')
-        .select('*')
-        .order('created_at', { ascending: false })
-    : await supabase
-        .from('public_competition_catalog')
-        .select('*')
-        .order('starts_at', { ascending: true });
-
-  if (rosterResult.error) {
-    console.error('[Supabase] participants lookup failed:', rosterResult.error);
-    throw new Error(`participants lookup failed: ${rosterResult.error.message}`);
-  }
-
-  if (resultsResult.error) {
-    console.error('[Supabase] results lookup failed:', resultsResult.error);
-    throw new Error(`results lookup failed: ${resultsResult.error.message}`);
-  }
-
-  if (competitionsResult.error) {
-    console.error('[Supabase] competitions lookup failed:', competitionsResult.error);
-    throw new Error(`competitions lookup failed: ${competitionsResult.error.message}`);
-  }
-
-  const settings = settingsResult.data;
-
+    ? await supabase.from('competitions').select('*').order('created_at', { ascending: false })
+    : await supabase.from('public_competition_catalog').select('*').order('starts_at', { ascending: true });
+  if (rosterResult.error) throw rosterResult.error;
+  if (resultsResult.error) throw resultsResult.error;
+  if (competitionsResult.error) throw competitionsResult.error;
+  const s = settingsResult.data;
   return {
     role,
-    account: user
-      ? {
-          id: user.id,
-          email: user.email,
-          name:
-            profileResult.data?.full_name ||
-            user.user_metadata?.full_name ||
-            user.email,
-          role,
-        }
-      : null,
+    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role } : null,
     participants: (rosterResult.data || []).map(fromParticipant),
-    results: (resultsResult.data || []).map((row) => ({
-      ...fromParticipant(row),
-      evaluated: true,
-    })),
+    results: (resultsResult.data || []).map((row) => ({ ...fromParticipant(row), evaluated: true })),
     competitions: (competitionsResult.data || []).map(fromCompetition),
     config: {
-      title: settings.title,
-      duration: settings.duration_minutes,
-      mode: settings.mode,
-      task: settings.task,
-      registrationOpen: settings.registration_open,
-      paymentEnabled: settings.payment_enabled,
-      paymentAmount: settings.payment_amount || '',
-      paymentInstructions: settings.payment_instructions || '',
-      driveUploadUrl: settings.drive_upload_url || '',
-      driveEnabled: settings.drive_enabled,
-      resultsPublished: settings.results_published,
+      title: s.title, duration: s.duration_minutes, mode: s.mode, task: s.task,
+      registrationOpen: s.registration_open, paymentEnabled: s.payment_enabled,
+      paymentAmount: s.payment_amount || '', paymentInstructions: s.payment_instructions || '',
+      driveUploadUrl: s.drive_upload_url || '', driveEnabled: s.drive_enabled,
+      resultsPublished: s.results_published,
     },
   };
 }
+
 function fromCompetition(row) {
   return {
     id: row.id, title: row.title, shortDescription: row.short_description,
