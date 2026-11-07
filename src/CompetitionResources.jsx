@@ -22,16 +22,18 @@ function loadScript(src, id) {
 export default function CompetitionResources({ competitionId, participant = null, userId, backendReady, admin = false }) {
   const [rows, setRows] = useState([]); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [googleSession,setGoogleSession]=useState(null);
   const [category, setCategory] = useState('Other Documents'); const [link, setLink] = useState(''); const [linkName, setLinkName] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState([]); const participantId = participant?.id || null;
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const registrationId = participant?.registrationId || participant?.id || null;
+  const participantId = participant?.legacyParticipantId || null;
   async function refresh() {
     if (!backendReady || !competitionId) return;
-    try { setRows(await loadCompetitionResources(competitionId, participantId)); }
+    try { setRows(await loadCompetitionResources(competitionId, registrationId, participantId)); }
     catch (error) { setMessage(`Could not load resources: ${error.message}`); }
   }
-  useEffect(() => { refresh(); }, [competitionId, participantId, backendReady]);
+  useEffect(() => { refresh(); }, [competitionId, registrationId, participantId, backendReady]);
   async function saveLink(e) {
     e.preventDefault(); setBusy(true); setMessage('');
-    try { await saveCompetitionResourceLink({ competitionId, participantId, userId, url: link, name: linkName || link, category, description: '' }); setLink(''); setLinkName(''); await refresh(); setMessage('Link saved to the competition resource list.'); }
+    try { await saveCompetitionResourceLink({ competitionId, registrationId, participantId, userId, url: link, name: linkName || link, category, description: '' }); setLink(''); setLinkName(''); await refresh(); setMessage('Link saved to the competition resource list.'); }
     catch (error) { setMessage(`Link was not saved: ${error.message}`); } finally { setBusy(false); }
   }
   async function uploadFiles() {
@@ -42,7 +44,7 @@ export default function CompetitionResources({ competitionId, participant = null
     setBusy(true); setMessage(`Uploading ${files.length} item${files.length===1?'':'s'}…`);
     let done = 0;
     try {
-      for (const file of files) { await uploadCompetitionResource({ file, competitionId, participantId, userId, category }); done++; }
+      for (const file of files) { await uploadCompetitionResource({ file, competitionId, registrationId, participantId, userId, category }); done++; }
       setSelectedFiles([]); await refresh(); setMessage(`${done} resource${done===1?'':'s'} uploaded to private Supabase Storage.`);
     } catch (error) { await refresh(); setMessage(`${done} uploaded; next upload failed: ${error.message}`); }
     finally { setBusy(false); }
@@ -82,7 +84,7 @@ export default function CompetitionResources({ competitionId, participant = null
             if(data.action!==window.google.picker.Action.PICKED)return;
             try {
               const docs=(data.docs||[]).map(d=>({id:d.id,name:d.name,mimeType:d.mimeType,url:d.url||d.embedUrl||'',size:d.size||null,iconUrl:d.iconUrl||''}));
-              await saveGoogleDriveResources({competitionId,participantId,userId,items:docs}); await refresh(); setMessage(`${docs.length} Google Drive item${docs.length===1?'':'s'} imported. Google files stay in Drive; only IDs and metadata are stored here.`); resolve();
+              await saveGoogleDriveResources({competitionId,registrationId,participantId,userId,items:docs}); await refresh(); setMessage(`${docs.length} Google Drive item${docs.length===1?'':'s'} imported. Google files stay in Drive; only IDs and metadata are stored here.`); resolve();
             } catch(error) { reject(error); }
           }).build();
         picker.setVisible(true);
@@ -103,7 +105,7 @@ export default function CompetitionResources({ competitionId, participant = null
     if (!allowedFile(file) || file.size > 6 * 1024 * 1024) { setMessage('Choose an allowed file under 6 MB.'); return; }
     setBusy(true);
     try {
-      await uploadCompetitionResource({ file, competitionId, participantId, userId, category: row.category, description: row.description });
+      await uploadCompetitionResource({ file, competitionId, registrationId, participantId, userId, category: row.category, description: row.description });
       await removeCompetitionResource(row); await refresh(); setMessage('Resource file replaced.');
     } catch(error) { await refresh(); setMessage(`Could not replace file: ${error.message}`); }
     finally { setBusy(false); }

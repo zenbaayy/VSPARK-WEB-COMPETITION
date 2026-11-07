@@ -1,6 +1,6 @@
 # VSpark Competition Portal — Setup Guide
 
-This guide describes integrations present in this repository as of November 5, 2026. The portal currently uses Supabase for application data and direct file uploads. Google Drive selection is implemented with Google Picker and Google Identity Services; it only becomes active after the three public Google configuration values below are supplied. Bulk email delivery and Google Sheets synchronization are not implemented and have no environment variables in this project.
+This guide describes integrations present in this repository as of November 7, 2026. The portal currently uses Supabase for application data and direct file uploads. Google Drive selection is implemented with Google Picker and Google Identity Services; it only becomes active after the three public Google configuration values below are supplied. Bulk email delivery and Google Sheets synchronization are not implemented and have no environment variables in this project.
 
 ## 1. Install and run
 
@@ -40,6 +40,12 @@ This guide describes integrations present in this repository as of November 5, 2
 7. The schema removes the former profile-picture column and profile-image bucket. If an older project already has profile pictures, running this version of the schema deletes those profile-image objects as part of feature removal; other participant columns are retained.
 
 > The supplied SQL is a setup schema for a new Supabase project. Review existing data and take a database backup before applying it to any populated database.
+
+### Upgrade an existing deployment
+
+If this Supabase project already contains participant or competition data, **do not rerun `supabase/schema.sql` as an upgrade**. First take a Supabase backup, then run `supabase/migrations/20261107_competition_scoped_workflow.sql` once in **SQL Editor → New query**. It adds the registration-scoped workflow, copies legacy participant records only when their competition ID matches an existing competition, and does not delete rows from `participants`. Review the SQL before running it. The deployed frontend expects this migration; after the query succeeds, deploy the matching Git commit to Vercel.
+
+The migration creates a blank submission record per competition registration. Timer, draft, final submission, and results are keyed by the registration ID. An existing Auth user can sign in during registration to join another competition; they do not need a second account. The old competition setup row remains for compatibility, while competition-specific settings should be edited under **Organizer → Manage competitions**.
 
 ### Configure Auth
 
