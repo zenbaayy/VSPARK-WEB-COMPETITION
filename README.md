@@ -95,8 +95,8 @@ Google variables are optional unless Google Picker is being configured. `.env.lo
 
 When Supabase is **not configured**, the app can run in browser-only demo mode with:
 
-- Email: `admin@vspark.demo`
-- Password: `SparkDemo26!`
+- Email: `admin123@gmail.com`
+- Password: `ADMIN123`
 
 This sample account is not a Supabase user and does not provide persistent/shared production data. When Supabase is configured, sign in with an account that exists in that Supabase project. Never publish real administrator credentials; rotate any real password that has been shared publicly or in a group chat.
 
