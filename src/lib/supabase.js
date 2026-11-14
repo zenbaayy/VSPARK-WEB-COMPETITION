@@ -193,10 +193,19 @@ export async function deleteCompetition(id) {
 export async function registerParticipant(values) {
   if (!supabase) return null;
   const { password, confirm, ...profile } = values;
+  const optionalText = value => value?.trim() || null;
+  const metadata = {
+    ...profile,
+    reg: optionalText(profile.reg),
+    department: optionalText(profile.department),
+    batch: optionalText(profile.batch),
+    type: optionalText(profile.type),
+    memberReg: optionalText(profile.memberReg),
+  };
   let { data, error } = await supabase.auth.signUp({
     email: values.email,
     password,
-    options: { data: { ...profile, full_name: values.name, competition_id: values.competitionId } },
+    options: { data: { ...metadata, full_name: values.name, competition_id: values.competitionId } },
   });
   let user = data?.user || null;
   const existingAccount = error && /already registered|user exists|email.*exists/i.test(error.message)
@@ -217,10 +226,10 @@ export async function registerParticipant(values) {
   if (lookupError) throw lookupError;
   if (!existingRegistration) {
     const { error: registrationError } = await supabase.from('competition_registrations').insert({
-      competition_id: values.competitionId, user_id: user.id, registration_number: values.reg,
+      competition_id: values.competitionId, user_id: user.id, registration_number: optionalText(values.reg),
       participant_name: values.name, email: values.email, phone: values.phone,
-      university_name: values.university, department: values.department, semester: values.semester,
-      batch: values.batch, participation_type: values.type, team_name: values.team || null,
+      university_name: values.university, department: optionalText(values.department), semester: values.semester,
+      batch: optionalText(values.batch), participation_type: optionalText(values.type), team_name: values.team || null,
       member_details: values.type === 'Team' ? {
         memberName: values.memberName, memberReg: values.memberReg,
         memberEmail: values.memberEmail, memberPhone: values.memberPhone,
