@@ -88,6 +88,7 @@ function fromCompetition(row) {
     rules: row.rules_html, task: row.task_html || row.task, startsAt: row.starts_at,
     submissionInstructions: row.submission_instructions || '', requiredTechnologies: row.required_technologies || '',
     endsAt: row.ends_at, registrationDeadline: row.registration_deadline, status: row.status,
+    duration: row.duration_minutes, mode: row.mode,
     registrationOpen: row.registration_open,
     driveUploadUrl: row.drive_upload_url || '', driveEnabled: row.drive_enabled,
     resultsAnnounced: row.results_announced,
@@ -153,12 +154,14 @@ export async function registerForCompetition(values) {
   if (!user) throw new Error('Log in before joining another competition.');
   const { data, error } = await supabase.rpc('register_for_competition', {
     p_competition_id: values.competitionId,
-    p_registration_number: values.reg,
-    p_university_name: values.university,
-    p_department: values.department,
-    p_semester: values.semester,
-    p_batch: values.batch,
-    p_participation_type: values.type,
+    // Always send every argument: undefined properties are omitted and make
+    // PostgREST search for a different overload/signature.
+    p_registration_number: values.reg || null,
+    p_university_name: values.university || '',
+    p_department: values.department || null,
+    p_semester: values.semester || '',
+    p_batch: values.batch || null,
+    p_participation_type: values.type || 'Individual',
     p_team_name: values.team || null,
     p_member_details: values.type === 'Team' ? {
       memberName: values.memberName, memberReg: values.memberReg,

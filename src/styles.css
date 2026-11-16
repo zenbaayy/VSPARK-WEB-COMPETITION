@@ -23,3 +23,5 @@
 @media(max-width:700px){.resource-row{align-items:flex-start;flex-wrap:wrap}.resource-status{margin-left:auto}.resource-link-form{flex-wrap:wrap}.resource-link-form input{flex-basis:100%}.resource-controls>.field{flex:1}.drive-submission-section{padding:10px}.resource-file-picker{flex:1}.competition-admin-card>*{min-width:0}}
 
 .integration-tools{grid-column:1/-1;margin:12px 0}.integration-tools>p,.integration-tools>small{color:#64748b}.integration-tools>small{display:block;margin-top:12px}.integration-result{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:12px;border-radius:10px;background:#f0fdf4;color:#166534}.integration-result.error{background:#fff7ed;color:#9a3412}.integration-result a{display:inline-flex;align-items:center;gap:4px;font-weight:700;color:inherit}.integration-tools .inline-actions{flex-wrap:wrap}
+
+.assigned-task-copy{line-height:1.75;color:#475569;overflow-wrap:anywhere}.submission-assigned-task{padding:18px 20px;margin-bottom:18px;border:1px solid #d8e5ff;border-radius:16px;background:#f7faff}.submission-assigned-task .kicker{display:block;margin-bottom:8px;color:#2563eb}

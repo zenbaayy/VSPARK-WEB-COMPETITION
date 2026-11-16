@@ -148,3 +148,6 @@ end;
 $$;
 revoke all on function public.register_for_competition(uuid,text,text,text,text,text,text,text,jsonb) from public;
 grant execute on function public.register_for_competition(uuid,text,text,text,text,text,text,text,jsonb) to authenticated;
+
+-- Make the new RPC signature visible to Supabase's PostgREST API promptly.
+notify pgrst, 'reload schema';
