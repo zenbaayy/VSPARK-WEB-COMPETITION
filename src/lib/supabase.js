@@ -24,41 +24,6 @@ export function fromParticipant(row) {
   };
 }
 
-function fromRegistration(row, legacyRow = null) {
-  const submission = Array.isArray(row.competition_submissions)
-    ? row.competition_submissions[0]
-    : row.competition_submissions;
-  const competition = Array.isArray(row.competitions) ? row.competitions[0] : row.competitions;
-  const apis = Array.isArray(submission?.external_apis)
-    ? submission.external_apis.map(api => `${api.name || ''} | ${api.url || ''}`).join('\n')
-    : '';
-  return {
-    id: row.id, registrationId: row.id, legacyParticipantId: legacyRow?.id || null,
-    userId: row.user_id, name: row.participant_name || row.registration_number,
-    email: row.email || '', university: row.university_name, winnerStatus: row.winner_status || 'Not Announced',
-    registrationDate: row.created_at, reg: row.registration_number, phone: row.phone, department: row.department,
-    semester: row.semester, batch: row.batch, type: row.participation_type, team: row.team_name || '',
-    ...(row.member_details || {}), payment: row.payment_status, paymentRef: row.payment_ref,
-    paymentProof: row.payment_proof_path, paymentComment: row.payment_comment,
-    project: submission?.project_title || '', github: submission?.github_url || '',
-    live: submission?.live_url || '', drive: submission?.participant_drive_url || '',
-    submittedAt: submission?.submitted_at || null, startedAt: submission?.started_at || null,
-    competitionId: row.competition_id, description: submission?.project_description || '',
-    technologies: submission?.technologies || '', apis, readme: !!submission?.readme_confirmed,
-    evaluation: submission?.scores || {}, feedback: submission?.judge_feedback || '',
-    evaluated: !!submission?.evaluated, competition,
-  };
-}
-
-function toApiArray(value = '') {
-  return String(value).split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
-    const separator = line.indexOf('|');
-    return separator < 0
-      ? { name: line, url: '' }
-      : { name: line.slice(0, separator).trim(), url: line.slice(separator + 1).trim() };
-  });
-}
-
 export function toParticipant(values, userId) {
   const member = values.type === 'Team' ? {
     memberName: values.memberName, memberReg: values.memberReg,
@@ -75,53 +40,36 @@ export function toParticipant(values, userId) {
 export async function loadCompetition(user) {
   if (!supabase) return null;
   const profileResult = user
-    ? await supabase.from('profiles').select('id,full_name,role').eq('id', user.id).limit(1)
-    : { data: [], error: null };
+    ? await supabase.from('profiles').select('id,full_name,role').eq('id', user.id).maybeSingle()
+    : { data: null, error: null };
   if (profileResult.error) throw profileResult.error;
-  const profileRow = profileResult.data?.[0] || null;
-  const role = profileRow?.role || 'participant';
+  const role = profileResult.data?.role || 'participant';
   // Participant sessions may not have SELECT access to the private settings table.
   // The public view is intended for the website and also contains the public config.
   const settingsSource = role === 'admin' ? 'competition_settings' : 'public_competition_settings';
-  // Read as an array to avoid PostgREST single-object coercion blocking login.
-  const settingsResult = await supabase.from(settingsSource).select('*').eq('id', 1).limit(1);
+  const settingsResult = await supabase.from(settingsSource).select('*').eq('id', 1).maybeSingle();
   if (settingsResult.error) throw settingsResult.error;
-  const settingsRow = settingsResult.data?.[0];
-  if (!settingsRow) {
+  if (!settingsResult.data) {
     throw new Error(`No id=1 settings row is visible in ${settingsSource} for this account. Check Supabase SELECT policies/view.`);
   }
-  const registrationQuery = supabase.from('competition_registrations')
-    .select('*,competition_submissions(*),competitions(*)')
-    .order('created_at', { ascending: false });
   const rosterResult = user && role === 'admin'
-    ? await registrationQuery
+    ? await supabase.from('participants').select('*').order('created_at', { ascending: false })
     : user
-      ? await registrationQuery.eq('user_id', user.id)
+    ? await supabase.from('participants').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
       : { data: [], error: null };
-  const resultsResult = await supabase.rpc('published_results_by_competition');
-  const legacyRosterResult = user
-    ? role === 'admin'
-      ? await supabase.from('participants').select('id,user_id,competition_id')
-      : await supabase.from('participants').select('id,user_id,competition_id').eq('user_id', user.id)
-    : { data: [], error: null };
+  const resultsResult = await supabase.rpc('published_competition_results');
   const competitionsResult = role === 'admin'
     ? await supabase.from('competitions').select('*').order('created_at', { ascending: false })
     : await supabase.from('public_competition_catalog').select('*').order('starts_at', { ascending: true });
   if (rosterResult.error) throw rosterResult.error;
-  if (legacyRosterResult.error) throw legacyRosterResult.error;
   if (resultsResult.error) throw resultsResult.error;
   if (competitionsResult.error) throw competitionsResult.error;
-  const s = settingsRow;
+  const s = settingsResult.data;
   return {
     role,
-    account: user ? { id: user.id, email: user.email, name: profileRow?.full_name || user.user_metadata?.full_name || user.email, role } : null,
-    participants: (rosterResult.data || []).map(row => fromRegistration(row,
-      (legacyRosterResult.data || []).find(legacy => legacy.user_id === row.user_id && legacy.competition_id === row.competition_id))),
-    results: (resultsResult.data || []).map(row => ({
-      id: row.id, name: row.name, team: row.team, batch: row.batch, project: row.project,
-      evaluation: row.evaluation || {}, evaluated: !!row.evaluated, submittedAt: row.submitted_at,
-      competitionId: row.competition_id,
-    })),
+    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role } : null,
+    participants: (rosterResult.data || []).map(fromParticipant),
+    results: (resultsResult.data || []).map((row) => ({ ...fromParticipant(row), evaluated: true })),
     competitions: (competitionsResult.data || []).map(fromCompetition),
     config: {
       title: s.title, duration: s.duration_minutes, mode: s.mode, task: s.task,
@@ -141,9 +89,6 @@ function fromCompetition(row) {
     submissionInstructions: row.submission_instructions || '', requiredTechnologies: row.required_technologies || '',
     endsAt: row.ends_at, registrationDeadline: row.registration_deadline, status: row.status,
     driveUploadUrl: row.drive_upload_url || '', driveEnabled: row.drive_enabled,
-    durationMinutes: row.duration_minutes || 120, mode: row.mode || 'Online', registrationOpen: row.registration_open !== false,
-    paymentEnabled: !!row.payment_enabled, paymentAmount: row.payment_amount || '',
-    paymentInstructions: row.payment_instructions || '',
     resultsAnnounced: row.results_announced,
     winners: row.winners || [], announcements: row.announcements || [],
   };
@@ -165,9 +110,6 @@ function toCompetition(item, userId) {
     starts_at: item.startsAt || null, ends_at: item.endsAt || null,
     registration_deadline: item.registrationDeadline || null, status: item.status || 'upcoming',
     drive_upload_url: item.driveUploadUrl || null, drive_enabled: !!item.driveEnabled,
-    duration_minutes: item.durationMinutes || 120, mode: item.mode || 'Online', registration_open: item.registrationOpen !== false,
-    payment_enabled: !!item.paymentEnabled, payment_amount: item.paymentAmount || null,
-    payment_instructions: item.paymentInstructions || null,
     results_announced: !!item.resultsAnnounced, created_by: userId || null,
     updated_at: new Date().toISOString(),
   };
@@ -193,97 +135,112 @@ export async function deleteCompetition(id) {
 export async function registerParticipant(values) {
   if (!supabase) return null;
   const { password, confirm, ...profile } = values;
-  const optionalText = value => value?.trim() || null;
-  const metadata = {
-    ...profile,
-    reg: optionalText(profile.reg),
-    department: optionalText(profile.department),
-    batch: optionalText(profile.batch),
-    type: optionalText(profile.type),
-    memberReg: optionalText(profile.memberReg),
-  };
-  let { data, error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: values.email,
     password,
-    options: { data: { ...metadata, full_name: values.name, competition_id: values.competitionId } },
+    options: { data: { ...profile, full_name: values.name, competition_id: values.competitionId } },
   });
-  let user = data?.user || null;
-  const existingAccount = error && /already registered|user exists|email.*exists/i.test(error.message)
-    || (!error && user && Array.isArray(user.identities) && user.identities.length === 0);
-  if (existingAccount) {
-    const signedIn = await supabase.auth.signInWithPassword({ email: values.email, password });
-    if (signedIn.error) throw new Error(`This email already has an account. Sign in with that account (and confirm its email first) to register for another competition. ${signedIn.error.message}`);
-    data = signedIn.data;
-    user = data.user;
-  } else if (error) {
-    throw error;
-  } else if (!data?.session) {
-    return { confirmationRequired: true };
-  }
-  if (!user || !values.competitionId) throw new Error('Select a competition before registering.');
-  const { data: existingRegistration, error: lookupError } = await supabase.from('competition_registrations')
-    .select('id').eq('user_id', user.id).eq('competition_id', values.competitionId).maybeSingle();
-  if (lookupError) throw lookupError;
-  if (!existingRegistration) {
-    const { error: registrationError } = await supabase.from('competition_registrations').insert({
-      competition_id: values.competitionId, user_id: user.id, registration_number: optionalText(values.reg),
-      participant_name: values.name, email: values.email, phone: values.phone,
-      university_name: values.university, department: optionalText(values.department), semester: values.semester,
-      batch: optionalText(values.batch), participation_type: optionalText(values.type), team_name: values.team || null,
-      member_details: values.type === 'Team' ? {
-        memberName: values.memberName, memberReg: values.memberReg,
-        memberEmail: values.memberEmail, memberPhone: values.memberPhone,
-      } : {},
-    });
-    if (registrationError) throw registrationError;
-  }
-  return { user };
+  if (error) throw error;
+  if (!data.session) return { confirmationRequired: true };
+  const { error: participantError } = await supabase.from('participants').select('id').eq('user_id', data.user.id).single();
+  if (participantError) throw participantError;
+  return { user: data.user };
+}
+
+export async function registerForCompetition(values) {
+  if (!supabase) return null;
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!user) throw new Error('Log in before joining another competition.');
+  const { data, error } = await supabase.rpc('register_for_competition', {
+    p_competition_id: values.competitionId,
+    p_registration_number: values.reg,
+    p_university_name: values.university,
+    p_department: values.department,
+    p_semester: values.semester,
+    p_batch: values.batch,
+    p_participation_type: values.type,
+    p_team_name: values.team || null,
+    p_member_details: values.type === 'Team' ? {
+      memberName: values.memberName, memberReg: values.memberReg,
+      memberEmail: values.memberEmail, memberPhone: values.memberPhone,
+    } : {},
+  });
+  if (error) throw error;
+  return user;
+}
+
+export async function removeCompetitionParticipant(id) {
+  if (!supabase) return;
+  const { error } = await supabase.rpc('admin_remove_competition_participant', { p_id: id });
+  if (error) throw error;
+}
+
+export async function saveCompetitionWinner({ competitionId, participantId, placement }) {
+  if (!supabase) return;
+  const { data: participant, error: participantError } = await supabase.from('participants').select('user_id,competition_id').eq('id', participantId).single();
+  if (participantError) throw participantError;
+  const { data: registration, error: registrationError } = await supabase.from('competition_registrations').select('id').eq('competition_id', competitionId).eq('user_id', participant.user_id).maybeSingle();
+  if (registrationError) throw registrationError;
+  if (!registration) throw new Error('This participant has no competition registration. Run the latest database migration.');
+  const { error } = await supabase.from('competition_winners').upsert({ competition_id: competitionId, registration_id: registration.id, placement: Number(placement), announced_at: new Date().toISOString() }, { onConflict: 'competition_id,placement' });
+  if (error) throw error;
+}
+
+export async function deleteCompetitionWinner({ competitionId, placement }) {
+  if (!supabase) return;
+  const { error } = await supabase.from('competition_winners').delete().eq('competition_id', competitionId).eq('placement', Number(placement));
+  if (error) throw error;
+}
+
+export async function loadPublicCompetitionWinners(competitionId) {
+  if (!supabase || !competitionId) return [];
+  const { data, error } = await supabase.rpc('public_competition_winners', { p_competition_id: competitionId });
+  if (error) throw error;
+  return data || [];
 }
 
 export async function saveParticipant(id, participant, isAdmin, patch = {}) {
   if (!supabase || !participant) return;
   if (!isAdmin && patch.startedAt) {
-    const { data, error } = await supabase.rpc('start_registration_timer', { p_registration_id: id });
+    const { data, error } = await supabase.rpc('start_competition_timer', { p_id: id });
     if (error) throw error;
     return { started_at: data };
   }
   if (!isAdmin && patch.saveDraft) {
-    const { data, error } = await supabase.rpc('save_registration_submission_draft', {
-      p_registration_id:id, p_project:participant.project || '', p_description:participant.description || '',
-      p_technologies:participant.technologies || '', p_api_details:toApiArray(participant.apis),
+    const { data, error } = await supabase.rpc('save_competition_submission_draft', {
+      p_id:id, p_project:participant.project || '', p_description:participant.description || '',
+      p_technologies:participant.technologies || '', p_api_details:participant.apis || '',
       p_github:participant.github || '', p_live:participant.live || '', p_drive:participant.drive || '',
-      p_readme_confirmed:!!participant.readme,
     });
     if (error) throw error;
     return data;
   }
   if (!isAdmin && patch.submittedAt) {
-    const { data, error } = await supabase.rpc('submit_registration_project', {
-      p_registration_id:id, p_project:participant.project, p_description:participant.description || '',
-      p_technologies:participant.technologies || '', p_api_details:toApiArray(participant.apis),
-      p_github:participant.github, p_live:participant.live, p_drive:participant.drive,
-      p_readme_confirmed:!!participant.readme,
+    const { data, error } = await supabase.rpc('submit_competition_project', {
+      p_id: id, p_project: participant.project, p_description: participant.description || '',
+      p_technologies: participant.technologies || '', p_api_details: participant.apis || '',
+      p_github: participant.github, p_live: participant.live, p_drive: participant.drive,
     });
     if (error) throw error;
     return data;
   }
+  const base = {
+    phone: participant.phone, payment_ref: participant.paymentRef || null,
+    payment_proof_path: participant.paymentProof || null, updated_at: new Date().toISOString(),
+  };
   if (isAdmin) {
-    const { error } = await supabase.rpc('admin_update_competition_registration', {
-      p_registration_id: id,
+    const { error } = await supabase.rpc('admin_update_participant', {
+      p_id: id,
       p_patch: {
-        payment_ref: participant.paymentRef || null,
-        payment_proof_path: participant.paymentProof || null,
-        payment_status: participant.payment, payment_comment: participant.paymentComment || null,
-        winner_status: participant.winnerStatus || 'Not Announced', scores: participant.evaluation || {},
-        judge_feedback: participant.feedback || '', evaluated: !!participant.evaluated,
+        ...base, payment_status: participant.payment, payment_comment: participant.paymentComment || null,
+        winner_status: participant.winnerStatus || 'Not Announced',
+        evaluation: participant.evaluation || {}, feedback: participant.feedback || '', evaluated: !!participant.evaluated,
       },
     });
     if (error) throw error;
   } else {
-    const { error } = await supabase.rpc('save_registration_payment', {
-      p_registration_id: id, p_phone: participant.phone || '',
-      p_payment_ref: participant.paymentRef || null, p_payment_proof_path: participant.paymentProof || null,
-    });
+    const { error } = await supabase.from('participants').update(base).eq('id', id);
     if (error) throw error;
   }
 }
@@ -298,6 +255,13 @@ export async function updatePassword(password) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { error } = await supabase.auth.updateUser({ password });
   if (error) throw error;
+}
+
+export async function updateAccountEmail(email) {
+  if (!supabase) throw new Error('Email changes need a connected Supabase project.');
+  const { data, error } = await supabase.auth.updateUser({ email });
+  if (error) throw error;
+  return data;
 }
 
 export async function saveSettings(config) {
@@ -329,12 +293,10 @@ export async function signedPaymentProof(path) {
   return data.signedUrl;
 }
 
-export async function loadCompetitionResources(competitionId, registrationId = null, legacyParticipantId = null) {
+export async function loadCompetitionResources(competitionId, participantId = null) {
   if (!supabase) return [];
   const base = () => supabase.from('competition_resources').select('*').eq('competition_id', competitionId).order('created_at', { ascending: false });
-  const queries = [base().is('registration_id',null).is('participant_id',null)];
-  if (registrationId) queries.push(base().eq('registration_id', registrationId));
-  if (legacyParticipantId) queries.push(base().eq('participant_id', legacyParticipantId));
+  const queries = participantId ? [base().is('participant_id',null), base().eq('participant_id',participantId)] : [base().is('participant_id',null)];
   const results = await Promise.all(queries);
   const failure = results.find(result => result.error);
   if (failure) throw failure.error;
@@ -342,15 +304,14 @@ export async function loadCompetitionResources(competitionId, registrationId = n
 }
 
 const safePathPart = value => String(value || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
-export async function uploadCompetitionResource({ file, competitionId, registrationId, participantId, userId, category = 'Other Documents', description = '' }) {
+export async function uploadCompetitionResource({ file, competitionId, participantId, userId, category = 'Other Documents', description = '' }) {
   if (!supabase) throw new Error('Connect Supabase before uploading project files.');
   const parts = String(file.webkitRelativePath || file.name).split(/[\\/]/).map(safePathPart);
-  const isParticipantResource = !!(registrationId || participantId);
-  const path = `${competitionId}/${isParticipantResource ? userId : `admin/${userId}`}/${crypto.randomUUID()}/${parts.join('/')}`;
+  const path = `${competitionId}/${participantId ? userId : `admin/${userId}`}/${crypto.randomUUID()}/${parts.join('/')}`;
   const { error: uploadError } = await supabase.storage.from('competition-files').upload(path, file, { upsert: false, contentType: file.type || 'application/octet-stream' });
   if (uploadError) throw uploadError;
   const payload = {
-    competition_id: competitionId, participant_id: participantId || null, registration_id: registrationId || null,
+    competition_id: competitionId, participant_id: participantId || null,
     source: 'upload', resource_type: 'file', category, display_name: file.webkitRelativePath || file.name,
     description, storage_path: path, mime_type: file.type || 'application/octet-stream', file_size: file.size,
     uploaded_by: userId, visibility: participantId ? 'registered' : 'registered', enabled: true,
@@ -360,11 +321,11 @@ export async function uploadCompetitionResource({ file, competitionId, registrat
   return data;
 }
 
-export async function saveCompetitionResourceLink({ competitionId, registrationId, participantId, userId, url, name, category = 'Other Documents', description = '' }) {
+export async function saveCompetitionResourceLink({ competitionId, participantId, userId, url, name, category = 'Other Documents', description = '' }) {
   if (!supabase) throw new Error('Connect Supabase before saving resource links.');
   if (!/^https?:\/\//i.test(url)) throw new Error('Enter a valid http or https URL.');
   const { data, error } = await supabase.from('competition_resources').insert({
-    competition_id: competitionId, participant_id: participantId || null, registration_id: registrationId || null, source: 'link', resource_type: 'link',
+    competition_id: competitionId, participant_id: participantId || null, source: 'link', resource_type: 'link',
     category, display_name: name || url, description, link_url: url, uploaded_by: userId,
     visibility: 'registered', enabled: true,
   }).select().single();
@@ -372,11 +333,11 @@ export async function saveCompetitionResourceLink({ competitionId, registrationI
   return data;
 }
 
-export async function saveGoogleDriveResources({ competitionId, registrationId, participantId, userId, items }) {
+export async function saveGoogleDriveResources({ competitionId, participantId, userId, items }) {
   if (!supabase) throw new Error('Connect Supabase before saving Google Drive selections.');
   if (!items?.length) return [];
   const payload = items.map(item => ({
-    competition_id: competitionId, participant_id: participantId || null, registration_id: registrationId || null, source: 'google_drive',
+    competition_id: competitionId, participant_id: participantId || null, source: 'google_drive',
     resource_type: item.mimeType === 'application/vnd.google-apps.folder' ? 'folder' : 'file',
     category: 'Google Drive', display_name: item.name, google_file_id: item.id,
     link_url: item.url || `https://drive.google.com/open?id=${encodeURIComponent(item.id)}`,
