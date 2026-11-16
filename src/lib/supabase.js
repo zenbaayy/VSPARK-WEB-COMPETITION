@@ -67,7 +67,7 @@ export async function loadCompetition(user) {
   const s = settingsResult.data;
   return {
     role,
-    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role } : null,
+    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role, profile: user.user_metadata || {} } : null,
     participants: (rosterResult.data || []).map(fromParticipant),
     results: (resultsResult.data || []).map((row) => ({ ...fromParticipant(row), evaluated: true })),
     competitions: (competitionsResult.data || []).map(fromCompetition),
@@ -88,6 +88,7 @@ function fromCompetition(row) {
     rules: row.rules_html, task: row.task_html || row.task, startsAt: row.starts_at,
     submissionInstructions: row.submission_instructions || '', requiredTechnologies: row.required_technologies || '',
     endsAt: row.ends_at, registrationDeadline: row.registration_deadline, status: row.status,
+    registrationOpen: row.registration_open,
     driveUploadUrl: row.drive_upload_url || '', driveEnabled: row.drive_enabled,
     resultsAnnounced: row.results_announced,
     winners: row.winners || [], announcements: row.announcements || [],
@@ -142,8 +143,6 @@ export async function registerParticipant(values) {
   });
   if (error) throw error;
   if (!data.session) return { confirmationRequired: true };
-  const { error: participantError } = await supabase.from('participants').select('id').eq('user_id', data.user.id).single();
-  if (participantError) throw participantError;
   return { user: data.user };
 }
 
