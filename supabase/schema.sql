@@ -81,10 +81,10 @@ create table if not exists public.participants (
   reg text,
   email text not null,
   phone text not null,
-  department text,
+  department text not null,
   semester text not null,
-  batch text,
-  participation_type text check (participation_type in ('Individual','Team')),
+  batch text not null,
+  participation_type text not null check (participation_type in ('Individual','Team')),
   team text,
   member jsonb not null default '{}'::jsonb,
   payment_status text not null default 'Pending' check (payment_status in ('Pending','Verified','Rejected')),
@@ -360,10 +360,10 @@ create table if not exists public.competition_registrations (
   phone text not null default '',
   registration_number text,
   university_name text not null,
-  department text,
-  batch text,
+  department text not null,
+  batch text not null,
   semester text not null,
-  participation_type text check (participation_type in ('Individual','Team')),
+  participation_type text not null check (participation_type in ('Individual','Team')),
   team_name text,
   member_details jsonb not null default '{}'::jsonb,
   payment_status text not null default 'Pending' check (payment_status in ('Pending','Verified','Rejected')),
@@ -372,6 +372,75 @@ create table if not exists public.competition_registrations (
   unique (competition_id, user_id),
   unique (competition_id, registration_number)
 );
+
+-- A single auth account can join multiple competitions. The old compatibility
+-- table stores one competition-specific participant row per registration.
+alter table public.participants drop constraint if exists participants_user_id_key;
+alter table public.participants drop constraint if exists participants_reg_key;
+alter table public.participants drop constraint if exists participants_email_key;
+create unique index if not exists participants_competition_user_uidx
+  on public.participants (competition_id, user_id) where competition_id is not null;
+create unique index if not exists participants_competition_reg_uidx
+  on public.participants (competition_id, lower(reg)) where competition_id is not null;
+
+create or replace function public.register_for_competition(
+  p_competition_id uuid, p_registration_number text, p_university_name text,
+  p_department text, p_semester text, p_batch text, p_participation_type text,
+  p_team_name text default null, p_member_details jsonb default '{}'::jsonb
+) returns uuid language plpgsql security definer set search_path=public
+as $$
+declare
+  actor uuid := auth.uid();
+  account_email text;
+  display_name text;
+  participant_id uuid;
+begin
+  if actor is null then raise exception 'Log in before joining a competition'; end if;
+  if p_participation_type not in ('Individual','Team') then raise exception 'Choose Individual or Team participation'; end if;
+  if nullif(trim(p_registration_number),'') is null then raise exception 'Registration number is required'; end if;
+  select email into account_email from auth.users where id=actor;
+  select full_name into display_name from public.profiles where id=actor;
+  if exists(select 1 from public.participants where user_id=actor and competition_id=p_competition_id) then
+    raise exception 'You are already registered for this competition';
+  end if;
+  insert into public.participants (
+    user_id,name,reg,email,phone,department,semester,batch,participation_type,
+    team,member,university_name,competition_id
+  ) values (
+    actor,coalesce(display_name,split_part(account_email,'@',1)),trim(p_registration_number),account_email,
+    coalesce((select phone from public.participants where user_id=actor order by created_at limit 1),''),
+    coalesce(p_department,''),coalesce(p_semester,''),coalesce(p_batch,''),p_participation_type,
+    nullif(trim(p_team_name),''),coalesce(p_member_details,'{}'::jsonb),coalesce(p_university_name,''),p_competition_id
+  ) returning id into participant_id;
+  insert into public.competition_registrations (
+    competition_id,user_id,registration_number,university_name,department,batch,semester,
+    participation_type,team_name,member_details
+  ) values (
+    p_competition_id,actor,trim(p_registration_number),coalesce(p_university_name,''),
+    coalesce(p_department,''),coalesce(p_batch,''),coalesce(p_semester,''),p_participation_type,
+    nullif(trim(p_team_name),''),coalesce(p_member_details,'{}'::jsonb)
+  );
+  return participant_id;
+end;
+$$;
+revoke all on function public.register_for_competition(uuid,text,text,text,text,text,text,text,jsonb) from public;
+grant execute on function public.register_for_competition(uuid,text,text,text,text,text,text,text,jsonb) to authenticated;
+
+create or replace function public.admin_remove_competition_participant(p_id uuid)
+returns void language plpgsql security definer set search_path=public
+as $$
+declare participant_row public.participants;
+begin
+  if not public.is_competition_admin() then raise exception 'Organizer access required'; end if;
+  select * into participant_row from public.participants where id=p_id;
+  if not found then raise exception 'Competition registration not found'; end if;
+  delete from public.competition_registrations
+    where competition_id=participant_row.competition_id and user_id=participant_row.user_id;
+  delete from public.participants where id=p_id;
+end;
+$$;
+revoke all on function public.admin_remove_competition_participant(uuid) from public;
+grant execute on function public.admin_remove_competition_participant(uuid) to authenticated;
 
 create or replace function public.enforce_two_competitions()
 returns trigger language plpgsql security definer set search_path = public
@@ -572,9 +641,28 @@ create index if not exists competition_resources_participant_idx on public.compe
 alter table public.competition_resources enable row level security;
 drop policy if exists "read visible competition resources" on public.competition_resources;
 create policy "read visible competition resources" on public.competition_resources for select to authenticated
-  using (enabled and (visibility='public' or public.is_competition_admin() or exists(
-    select 1 from public.participants p where p.id=participant_id and p.user_id=auth.uid()
-  )));
+  using (enabled and (
+    public.is_competition_admin()
+    or visibility='public'
+    or (
+      participant_id is null
+      and visibility='registered'
+      and exists (
+        select 1 from public.participants p
+        where p.competition_id=competition_resources.competition_id
+          and p.user_id=auth.uid()
+      )
+    )
+    or (
+      participant_id is not null
+      and exists (
+        select 1 from public.participants p
+        where p.id=competition_resources.participant_id
+          and p.user_id=auth.uid()
+          and p.competition_id=competition_resources.competition_id
+      )
+    )
+  ));
 drop policy if exists "admin manage competition resources" on public.competition_resources;
 create policy "admin manage competition resources" on public.competition_resources for all to authenticated
   using (public.is_competition_admin()) with check (public.is_competition_admin());
@@ -651,6 +739,32 @@ end;
 $$;
 revoke all on function public.authorized_competition_details(uuid) from public;
 grant execute on function public.authorized_competition_details(uuid) to authenticated;
+-- Public Results page reads only announced placements and the display fields
+-- needed for the podium; participant contact/profile data stays private.
+create or replace function public.public_competition_winners(p_competition_id uuid)
+returns jsonb
+language sql stable security definer set search_path = public
+as $$
+  with podium as (
+    select w.placement as position, coalesce(nullif(p.team,''), p.name, 'Participant') as name,
+      coalesce(p.project,'') as project, coalesce(p.batch,'') as batch
+    from public.competition_winners w
+    join public.competition_registrations r on r.id=w.registration_id
+    join public.participants p on p.user_id=r.user_id and p.competition_id=r.competition_id
+    where w.competition_id=p_competition_id and w.announced_at is not null
+    union all
+    select case p.winner_status when 'Winner' then 1 else 2 end,
+      coalesce(nullif(p.team,''), p.name, 'Participant'), coalesce(p.project,''), coalesce(p.batch,'')
+    from public.participants p
+    where p.competition_id=p_competition_id and p.winner_status in ('Winner','Runner-up')
+      and not exists (select 1 from public.competition_winners w where w.competition_id=p_competition_id
+        and w.placement=case p.winner_status when 'Winner' then 1 else 2 end and w.announced_at is not null)
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('position',position,'name',name,'project',project,'batch',batch)
+    order by position), '[]'::jsonb) from podium;
+$$;
+revoke all on function public.public_competition_winners(uuid) from public;
+grant execute on function public.public_competition_winners(uuid) to anon, authenticated;
 grant select on public.competition_announcements to authenticated;
 drop policy if exists "registered participant read competition files" on storage.objects;
 create policy "registered participant read competition files" on storage.objects for select to authenticated
