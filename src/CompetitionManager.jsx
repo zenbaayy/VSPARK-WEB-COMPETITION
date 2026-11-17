@@ -7,7 +7,7 @@ import CompetitionResources from './CompetitionResources';
 const blank = () => ({
   id: '', title: '', shortDescription: '', description: '', durationMinutes: 120, university: 'COMSATS University Islamabad',
   department: 'Department of Computer Science, Vehari Campus', rules: '', task: '', submissionInstructions: '', requiredTechnologies: '',
-  startsAt: '', endsAt: '', registrationDeadline: '', status: 'upcoming',
+  startsAt: '', endsAt: '', registrationDeadline: '', status: 'upcoming', registrationOpen: true,
   driveUploadUrl: '', driveEnabled: false, resultsAnnounced: false, winners: [],
 });
 const localDate = value => value ? new Date(value).toISOString().slice(0, 16) : '';
@@ -57,6 +57,7 @@ export default function CompetitionManager({ competitions = [], participants = [
           <label className="field"><span>Duration (minutes)</span><input type="number" min="1" max="240" value={editing.durationMinutes||120} onChange={e => setEditing({ ...editing, durationMinutes: Math.min(240,Math.max(1,Number(e.target.value))) })}/></label><label className="field"><span>Starts at</span><input type="datetime-local" value={editing.startsAt} onChange={e => setEditing({ ...editing, startsAt: e.target.value })}/></label>
           <label className="field"><span>Ends at</span><input type="datetime-local" value={editing.endsAt} onChange={e => setEditing({ ...editing, endsAt: e.target.value })}/></label>
           <label className="field"><span>Registration deadline</span><input type="datetime-local" value={editing.registrationDeadline} onChange={e => setEditing({ ...editing, registrationDeadline: e.target.value })}/></label>
+          <label className="toggle-setting"><span><b>Registration open for this competition</b><small>Participants can join while this is enabled and the deadline has not passed.</small></span><input type="checkbox" checked={editing.registrationOpen !== false} onChange={e => setEditing({ ...editing, registrationOpen: e.target.checked })}/></label>
           <label className="field"><span>Organizer Drive upload folder</span><input type="url" value={editing.driveUploadUrl} placeholder="https://drive.google.com/drive/folders/..." onChange={e => setEditing({ ...editing, driveUploadUrl: e.target.value })}/><small>Participants open this folder and upload manually. No automatic Drive API upload.</small></label>
           <label className="toggle-setting"><span><b>Show organizer Drive folder</b><small>This link is separate from participant judge links.</small></span><input type="checkbox" checked={editing.driveEnabled} onChange={e => setEditing({ ...editing, driveEnabled: e.target.checked })}/></label>
           <RichTextEditor label="Detailed description" value={editing.description} placeholder="Explain the competition and who can participate" onChange={value => setEditing({ ...editing, description: value })}/>
