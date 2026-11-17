@@ -24,6 +24,13 @@ export function fromParticipant(row) {
   };
 }
 
+export function isCompetitionRegistrationOpen(competition, now = Date.now()) {
+  if (!competition || competition.registrationOpen === false || !['upcoming', 'active'].includes(competition.status)) return false;
+  if (!competition.registrationDeadline) return true;
+  const deadline = new Date(competition.registrationDeadline).getTime();
+  return Number.isFinite(deadline) && deadline >= now;
+}
+
 export function toParticipant(values, userId) {
   const member = values.type === 'Team' ? {
     memberName: values.memberName, memberReg: values.memberReg,
@@ -121,6 +128,7 @@ function fromCompetition(row) {
     ruleItems: row.rules || [],
     submissionInstructions: row.submission_instructions || '', requiredTechnologies: row.required_technologies || '',
     endsAt: row.ends_at, registrationDeadline: row.registration_deadline, status: row.status,
+    registrationOpen: row.registration_open !== false,
     driveUploadUrl: row.drive_upload_url || '', driveEnabled: row.drive_enabled,
     resultsAnnounced: row.results_announced,
     winners: row.winners || [], announcements: row.announcements || [],
@@ -175,6 +183,7 @@ function toCompetition(item, userId) {
     task: item.task || '', submission_instructions: item.submissionInstructions || '', required_technologies: item.requiredTechnologies || '',
     starts_at: item.startsAt || null, ends_at: item.endsAt || null,
     registration_deadline: item.registrationDeadline || null, status: item.status || 'upcoming',
+    registration_open: item.registrationOpen !== false,
     drive_upload_url: item.driveUploadUrl || null, drive_enabled: !!item.driveEnabled,
     results_announced: !!item.resultsAnnounced, created_by: userId || null,
     updated_at: new Date().toISOString(),

@@ -7,7 +7,7 @@ import {
   WalletCards, Trophy, CircleUserRound, Mail, Phone, CalendarDays, CircleCheck, AlertCircle,
   Timer, Link2, Save, Download, Eye, EyeOff, KeyRound, UserPlus, Server, Layers3, Lightbulb, GitBranch, Trash2,
 } from 'lucide-react';
-import { supabase, loadCompetition, registerParticipant, registerForCompetition, removeCompetitionParticipant, saveCompetitionWinner, deleteCompetitionWinner, saveParticipant, saveSettings, saveCompetition, deleteCompetition, uploadPaymentProof, signedPaymentProof, loadCompetitionResources, requestPasswordReset, updatePassword, updateAccountEmail, setProfileRole, loadAdminAccounts, updateAdminAccount, loadAdminAnnouncements, setAnnouncementVisibility } from './lib/supabase';
+import { supabase, loadCompetition, registerParticipant, registerForCompetition, removeCompetitionParticipant, saveCompetitionWinner, deleteCompetitionWinner, saveParticipant, saveSettings, saveCompetition, deleteCompetition, uploadPaymentProof, signedPaymentProof, loadCompetitionResources, requestPasswordReset, updatePassword, updateAccountEmail, setProfileRole, loadAdminAccounts, updateAdminAccount, loadAdminAnnouncements, setAnnouncementVisibility, isCompetitionRegistrationOpen } from './lib/supabase';
 import CompetitionManager from './CompetitionManager';
 import { CompetitionListings, CompetitionDetails } from './CompetitionPages';
 import CompetitionWinners from './CompetitionWinners';
@@ -62,12 +62,12 @@ function App(){
   if(user?.role==='participant'){
    if(!values.competitionId){setToast('Choose a competition before joining.');return false}
    if(userRegistrations.some(p=>p.competitionId===values.competitionId)){setToast('You are already registered for this competition.');return false}
-   if(!db.config.registrationOpen){setToast('Registration is currently closed.');return false}
+   const competition=db.competitions.find(c=>c.id===values.competitionId);if(!isCompetitionRegistrationOpen(competition)){setToast('Registration is currently closed for this competition.');return false}
    try{if(supabase){await registerForCompetition(values);const loaded=await loadCompetition(user);setDb(d=>({...d,users:[],participants:loaded.participants,profiles:loaded.profiles||[],results:loaded.results,competitions:loaded.competitions,config:loaded.config}));setUser(loaded.account)}else{const participant={...values,id:'p-'+Date.now(),userId:user.id,competitionId:values.competitionId,winnerStatus:'Not Announced',registrationDate:new Date().toISOString(),payment:'Pending',status:'Registered',project:'',github:'',live:'',drive:'',submittedAt:null,startedAt:null,evaluation:{},feedback:''};setDb(d=>({...d,participants:[participant,...d.participants]}))}go('dashboard/'+values.competitionId);setToast('You joined the selected competition.');return true}catch(error){setToast('Could not join competition: '+error.message);return false}
   }
   const targetCompetition=values.competitionId||null;
+  if(targetCompetition){const competition=db.competitions.find(c=>c.id===targetCompetition);if(!isCompetitionRegistrationOpen(competition)){setToast('Registration is currently closed for this competition.');return false}}
   if(targetCompetition&&values.reg?.trim()){const normalizedReg=values.reg.trim().toLowerCase();const joined=db.participants.filter(p=>p.reg?.trim().toLowerCase()===normalizedReg);if(joined.some(p=>p.competitionId===targetCompetition)){setToast('This registration number is already registered for this competition.');return false}if(joined.length>=2){setToast('A participant can join a maximum of two competitions.');return false}}
-  if(targetCompetition&&!db.config.registrationOpen){setToast('Registration is currently closed.');return false}
   values={...values,competitionId:targetCompetition};
   if(supabase){try{const result=await registerParticipant(values);if(result?.confirmationRequired){setToast('Account created. Check your email to confirm it, then log in.');go('login');return true}const loaded=await loadCompetition(result.user);setDb(d=>({...d,users:[],participants:loaded.participants,profiles:loaded.profiles||[],results:loaded.results,competitions:loaded.competitions,config:loaded.config}));setUser(loaded.account);go(targetCompetition?'dashboard/'+targetCompetition:'dashboard');setToast(targetCompetition?'Registration saved to the competition database.':'Account created. Choose a competition from your dashboard when you are ready.');return true}catch(error){setToast('Registration failed: '+error.message);return false}}
   const account={email:values.email,password:values.password,name:values.name,role:'participant'};
