@@ -5,10 +5,9 @@ import RichTextEditor from './RichTextEditor';
 import CompetitionResources from './CompetitionResources';
 
 const blank = () => ({
-  id: '', title: '', shortDescription: '', description: '', university: 'COMSATS University Islamabad',
+  id: '', title: '', shortDescription: '', description: '', durationMinutes: 120, university: 'COMSATS University Islamabad',
   department: 'Department of Computer Science, Vehari Campus', rules: '', task: '', submissionInstructions: '', requiredTechnologies: '',
-  startsAt: '', endsAt: '', registrationDeadline: '', status: 'upcoming', durationMinutes: 120, mode: 'Online',
-  registrationOpen: true, paymentEnabled: false, paymentAmount: '', paymentInstructions: '',
+  startsAt: '', endsAt: '', registrationDeadline: '', status: 'upcoming',
   driveUploadUrl: '', driveEnabled: false, resultsAnnounced: false, winners: [],
 });
 const localDate = value => value ? new Date(value).toISOString().slice(0, 16) : '';
@@ -42,7 +41,7 @@ export default function CompetitionManager({ competitions = [], participants = [
           <div className="competition-admin-dates"><CalendarDays size={15}/>{c.startsAt ? new Date(c.startsAt).toLocaleString() : 'Dates not set'}{c.registrationDeadline ? ` · Register by ${new Date(c.registrationDeadline).toLocaleDateString()}` : ''}</div>
           <div className="competition-admin-drive">Drive link: {c.driveEnabled && c.driveUploadUrl ? <a href={c.driveUploadUrl} target="_blank" rel="noreferrer">Enabled <ExternalLink size={13}/></a> : 'Disabled or not configured'}</div>
           <details className="competition-resource-details"><summary>Manage files, folders, and links</summary><CompetitionResources competitionId={c.id} userId={userId} backendReady={backendReady} admin/></details>
-          <div className="inline-actions"><button className="button button-outline button-sm" onClick={() => edit(c)}>Edit details</button><button className="reject-action" onClick={async() => { if (!window.confirm(`Permanently delete “${c.title}”? Its registrations, submissions, winners, and competition resources will also be deleted. This cannot be undone.`)) return; try { await onDelete(c.id); onToast('Competition and its associated data were deleted.'); } catch (error) { onToast(`Competition could not be deleted: ${error.message}`); } }}>Delete competition <Trash2 size={14}/></button></div>
+          <div className="inline-actions"><button className="button button-outline button-sm" onClick={() => edit(c)}>Edit details</button><button className="reject-action" onClick={() => { if (window.confirm(`Delete “${c.title}”? This will remove its demo registrations.`)) onDelete(c.id); }}>Delete <Trash2 size={14}/></button></div>
         </article>;
       })}{!visible.length && <div className="empty-table">No competitions match. Create one to get started.</div>}</div>
     </section>
@@ -55,15 +54,9 @@ export default function CompetitionManager({ competitions = [], participants = [
           <label className="field"><span>Short description</span><input value={editing.shortDescription} onChange={e => setEditing({ ...editing, shortDescription: e.target.value })}/></label>
           <label className="field"><span>University</span><input value={editing.university} onChange={e => setEditing({ ...editing, university: e.target.value })}/></label>
           <label className="field"><span>Department</span><input value={editing.department} onChange={e => setEditing({ ...editing, department: e.target.value })}/></label>
-          <label className="field"><span>Starts at</span><input type="datetime-local" value={editing.startsAt} onChange={e => setEditing({ ...editing, startsAt: e.target.value })}/></label>
+          <label className="field"><span>Duration (minutes)</span><input type="number" min="1" max="240" value={editing.durationMinutes||120} onChange={e => setEditing({ ...editing, durationMinutes: Math.min(240,Math.max(1,Number(e.target.value))) })}/></label><label className="field"><span>Starts at</span><input type="datetime-local" value={editing.startsAt} onChange={e => setEditing({ ...editing, startsAt: e.target.value })}/></label>
           <label className="field"><span>Ends at</span><input type="datetime-local" value={editing.endsAt} onChange={e => setEditing({ ...editing, endsAt: e.target.value })}/></label>
           <label className="field"><span>Registration deadline</span><input type="datetime-local" value={editing.registrationDeadline} onChange={e => setEditing({ ...editing, registrationDeadline: e.target.value })}/></label>
-          <label className="field"><span>Duration (minutes)</span><input type="number" min="1" max="240" value={editing.durationMinutes} onChange={e=>setEditing({...editing,durationMinutes:Number(e.target.value)})}/></label>
-          <label className="field"><span>Mode</span><select value={editing.mode} onChange={e=>setEditing({...editing,mode:e.target.value})}><option>Online</option><option>Onsite</option><option>Hybrid</option></select></label>
-          <label className="toggle-setting"><span><b>Registration open</b><small>Participants may register while this and status allow it.</small></span><input type="checkbox" checked={editing.registrationOpen} onChange={e=>setEditing({...editing,registrationOpen:e.target.checked})}/></label>
-          <label className="toggle-setting"><span><b>Payment required</b><small>Payment instructions and amount are specific to this competition.</small></span><input type="checkbox" checked={editing.paymentEnabled} onChange={e=>setEditing({...editing,paymentEnabled:e.target.checked})}/></label>
-          {editing.paymentEnabled&&<><label className="field"><span>Payment amount</span><input value={editing.paymentAmount} onChange={e=>setEditing({...editing,paymentAmount:e.target.value})} placeholder="e.g. PKR 500"/></label><label className="field"><span>Payment instructions</span><textarea rows="3" value={editing.paymentInstructions} onChange={e=>setEditing({...editing,paymentInstructions:e.target.value})}/></label></>}
-          <label className="toggle-setting"><span><b>Publish results for this competition</b><small>Only evaluated entries from this competition appear publicly.</small></span><input type="checkbox" checked={editing.resultsAnnounced} onChange={e=>setEditing({...editing,resultsAnnounced:e.target.checked})}/></label>
           <label className="field"><span>Organizer Drive upload folder</span><input type="url" value={editing.driveUploadUrl} placeholder="https://drive.google.com/drive/folders/..." onChange={e => setEditing({ ...editing, driveUploadUrl: e.target.value })}/><small>Participants open this folder and upload manually. No automatic Drive API upload.</small></label>
           <label className="toggle-setting"><span><b>Show organizer Drive folder</b><small>This link is separate from participant judge links.</small></span><input type="checkbox" checked={editing.driveEnabled} onChange={e => setEditing({ ...editing, driveEnabled: e.target.checked })}/></label>
           <RichTextEditor label="Detailed description" value={editing.description} placeholder="Explain the competition and who can participate" onChange={value => setEditing({ ...editing, description: value })}/>

@@ -1,2 +1,5 @@
 [functions.competition-integrations]
 verify_jwt = true
+
+[functions.admin-user-management]
+verify_jwt = true

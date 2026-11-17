@@ -13,7 +13,7 @@ export function fromParticipant(row) {
     winnerStatus: row.winner_status || 'Not Announced',
     registrationDate: row.created_at, reg: row.reg, email: row.email,
     phone: row.phone, department: row.department, semester: row.semester, batch: row.batch,
-    type: row.participation_type, team: row.team || '', ...(row.member || {}),
+    type: row.participation_type, team: row.team || '', ...(row.member || {}), teamDetails: row.member || {},
     payment: row.payment_status, paymentRef: row.payment_ref, paymentProof: row.payment_proof_path,
     paymentComment: row.payment_comment, project: row.project || '', github: row.github_url || '',
     live: row.live_url || '', drive: row.drive_url || '', submittedAt: row.submitted_at,
@@ -57,20 +57,52 @@ export async function loadCompetition(user) {
     : user
     ? await supabase.from('participants').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
       : { data: [], error: null };
+  const registrationsResult = user
+    ? role === 'admin'
+      ? await supabase.from('competition_registrations').select('competition_id,user_id,participation_type,team_name,member_details')
+      : await supabase.from('competition_registrations').select('competition_id,user_id,participation_type,team_name,member_details').eq('user_id', user.id)
+    : { data: [], error: null };
   const resultsResult = await supabase.rpc('published_competition_results');
   const competitionsResult = role === 'admin'
     ? await supabase.from('competitions').select('*').order('created_at', { ascending: false })
     : await supabase.from('public_competition_catalog').select('*').order('starts_at', { ascending: true });
+  const durationResult = role === 'admin'
+    ? { data: [], error: null }
+    : await supabase.from('public_competition_durations').select('id,duration_minutes');
+  const rulesResult = role === 'admin'
+    ? await supabase.from('competition_rules').select('id,competition_id,title,content,sort_order,created_at,updated_at').order('sort_order').order('created_at')
+    : { data: [], error: null };
   if (rosterResult.error) throw rosterResult.error;
+  if (registrationsResult.error) throw registrationsResult.error;
   if (resultsResult.error) throw resultsResult.error;
   if (competitionsResult.error) throw competitionsResult.error;
+  if (durationResult.error) throw durationResult.error;
+  if (rulesResult.error) throw rulesResult.error;
+  const profilesResult = role === 'admin'
+    ? await supabase.from('profiles').select('id,full_name,role,created_at').order('created_at', { ascending: true })
+    : { data: [], error: null };
+  if (profilesResult.error) throw profilesResult.error;
+  const registrations = new Map((registrationsResult.data || []).map(row => [`${row.competition_id}:${row.user_id}`, row]));
+  const participants = (rosterResult.data || []).map(row => {
+    const registration = registrations.get(`${row.competition_id}:${row.user_id}`);
+    return fromParticipant({ ...row,
+      participation_type: registration?.participation_type || row.participation_type,
+      team: registration?.team_name || row.team,
+      member: registration?.member_details && Object.keys(registration.member_details).length ? registration.member_details : row.member,
+    });
+  });
   const s = settingsResult.data;
   return {
     role,
-    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role, profile: user.user_metadata || {} } : null,
-    participants: (rosterResult.data || []).map(fromParticipant),
+    account: user ? { id: user.id, email: user.email, name: profileResult.data?.full_name || user.user_metadata?.full_name || user.email, role } : null,
+    participants,
+    profiles: profilesResult.data || [],
     results: (resultsResult.data || []).map((row) => ({ ...fromParticipant(row), evaluated: true })),
-    competitions: (competitionsResult.data || []).map(fromCompetition),
+    competitions: (competitionsResult.data || []).map(row => ({
+      ...fromCompetition(row),
+      durationMinutes: Number(role === 'admin' ? row.duration_minutes : (durationResult.data || []).find(item => item.id === row.id)?.duration_minutes) || 120,
+      ruleItems: (rulesResult.data || []).filter(rule => rule.competition_id === row.id),
+    })),
     config: {
       title: s.title, duration: s.duration_minutes, mode: s.mode, task: s.task,
       registrationOpen: s.registration_open, paymentEnabled: s.payment_enabled,
@@ -83,13 +115,12 @@ export async function loadCompetition(user) {
 
 function fromCompetition(row) {
   return {
-    id: row.id, title: row.title, shortDescription: row.short_description,
+    id: row.id, title: row.title, shortDescription: row.short_description, durationMinutes: Number(row.duration_minutes) || 120,
     description: row.detailed_description, university: row.university_name, department: row.department,
     rules: row.rules_html, task: row.task_html || row.task, startsAt: row.starts_at,
+    ruleItems: row.rules || [],
     submissionInstructions: row.submission_instructions || '', requiredTechnologies: row.required_technologies || '',
     endsAt: row.ends_at, registrationDeadline: row.registration_deadline, status: row.status,
-    duration: row.duration_minutes, mode: row.mode,
-    registrationOpen: row.registration_open,
     driveUploadUrl: row.drive_upload_url || '', driveEnabled: row.drive_enabled,
     resultsAnnounced: row.results_announced,
     winners: row.winners || [], announcements: row.announcements || [],
@@ -103,9 +134,42 @@ export async function loadCompetitionDetails(id) {
   return fromCompetition(data);
 }
 
+export async function loadCompetitionRules(competitionId) {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('competition_rules')
+    .select('id,competition_id,title,content,sort_order,created_at,updated_at')
+    .eq('competition_id', competitionId).order('sort_order').order('created_at');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createCompetitionRule({ competitionId, title, content, sortOrder = 0 }) {
+  if (!supabase) throw new Error('Connect Supabase to manage competition rules.');
+  const { data, error } = await supabase.rpc('admin_create_competition_rule', {
+    p_competition_id: competitionId, p_title: title, p_content: content, p_sort_order: sortOrder,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCompetitionRule({ id, title, content, sortOrder = 0 }) {
+  if (!supabase) throw new Error('Connect Supabase to manage competition rules.');
+  const { data, error } = await supabase.rpc('admin_update_competition_rule', {
+    p_id: id, p_title: title, p_content: content, p_sort_order: sortOrder,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCompetitionRule(id) {
+  if (!supabase) throw new Error('Connect Supabase to manage competition rules.');
+  const { error } = await supabase.rpc('admin_delete_competition_rule', { p_id: id });
+  if (error) throw error;
+}
+
 function toCompetition(item, userId) {
   return {
-    title: item.title, short_description: item.shortDescription || '',
+    title: item.title, short_description: item.shortDescription || '', duration_minutes: Math.min(240, Math.max(1, Number(item.durationMinutes) || 120)),
     detailed_description: item.description || '', university_name: item.university || '',
     department: item.department || '', rules_html: item.rules || '', task_html: item.task || '',
     task: item.task || '', submission_instructions: item.submissionInstructions || '', required_technologies: item.requiredTechnologies || '',
@@ -140,10 +204,13 @@ export async function registerParticipant(values) {
   const { data, error } = await supabase.auth.signUp({
     email: values.email,
     password,
-    options: { data: { ...profile, full_name: values.name, competition_id: values.competitionId } },
+    options: { data: values.competitionId ? { ...profile, full_name: values.name, competition_id: values.competitionId } : { full_name: values.name } },
   });
   if (error) throw error;
   if (!data.session) return { confirmationRequired: true };
+  if (!values.competitionId) return { user: data.user, accountOnly: true };
+  const { error: participantError } = await supabase.from('participants').select('id').eq('user_id', data.user.id).single();
+  if (participantError) throw participantError;
   return { user: data.user };
 }
 
@@ -154,14 +221,12 @@ export async function registerForCompetition(values) {
   if (!user) throw new Error('Log in before joining another competition.');
   const { data, error } = await supabase.rpc('register_for_competition', {
     p_competition_id: values.competitionId,
-    // Always send every argument: undefined properties are omitted and make
-    // PostgREST search for a different overload/signature.
-    p_registration_number: values.reg || null,
-    p_university_name: values.university || '',
-    p_department: values.department || null,
-    p_semester: values.semester || '',
-    p_batch: values.batch || null,
-    p_participation_type: values.type || 'Individual',
+    p_registration_number: values.reg,
+    p_university_name: values.university,
+    p_department: values.department,
+    p_semester: values.semester,
+    p_batch: values.batch,
+    p_participation_type: values.type,
     p_team_name: values.team || null,
     p_member_details: values.type === 'Team' ? {
       memberName: values.memberName, memberReg: values.memberReg,
@@ -177,6 +242,43 @@ export async function removeCompetitionParticipant(id) {
   const { error } = await supabase.rpc('admin_remove_competition_participant', { p_id: id });
   if (error) throw error;
 }
+
+export async function setProfileRole(userId, role) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('admin_set_profile_role', { p_user_id: userId, p_role: role });
+  if (error) throw error;
+}
+
+export async function loadAdminAccounts() {
+  if (!supabase) return [];
+  const { data, error } = await supabase.functions.invoke('admin-user-management', { body: { action: 'list' } });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data?.users || [];
+}
+
+export async function updateAdminAccount(userId, patch) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.functions.invoke('admin-user-management', { body: { action: 'update', userId, ...patch } });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data?.user;
+}
+
+export async function loadAdminAnnouncements() {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('competition_announcements')
+    .select('id,competition_id,subject,body,created_at,visible_to_participants').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function setAnnouncementVisibility(id, visible) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('admin_set_announcement_visibility', { p_id: id, p_visible: visible });
+  if (error) throw error;
+}
+
 
 export async function saveCompetitionWinner({ competitionId, participantId, placement }) {
   if (!supabase) return;
